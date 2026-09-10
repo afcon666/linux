@@ -1643,12 +1643,25 @@ drm_syncobj_timeline_signal_ioctl(struct drm_device *dev, void *data,
 	if (ret < 0)
 		return ret;
 
-	chains = kmalloc_array(count, sizeof(void *), GFP_KERNEL);
-	if (!chains) {
+	points = kmalloc_array(count, sizeof(*points), GFP_KERNEL);
+	if (!points) {
 		ret = -ENOMEM;
 		goto out;
 	}
-	for (i = 0; i < count; i++) {
+	if (!u64_to_user_ptr(args->points)) {
+		memset(points, 0, args->count_handles * sizeof(uint64_t));
+	} else if (copy_from_user(points, u64_to_user_ptr(args->points),
+				  sizeof(uint64_t) * args->count_handles)) {
+		ret = -EFAULT;
+		goto err_points;
+	}
+
+	chains = kmalloc_objs(*chains, args->count_handles);
+	if (!chains) {
+		ret = -ENOMEM;
+		goto err_points;
+	}
+	for (i = 0; i < args->count_handles; i++) {
 		chains[i] = dma_fence_chain_alloc();
 		if (!chains[i]) {
 			for (j = 0; j < i; j++)
@@ -1674,6 +1687,8 @@ drm_syncobj_timeline_signal_ioctl(struct drm_device *dev, void *data,
 	}
 err_chains:
 	kfree(chains);
+err_points:
+	kfree(points);
 out:
 	drm_syncobj_array_free(syncobjs, count, syncobjs != stack_syncobjs);
 
