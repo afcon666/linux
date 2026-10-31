@@ -23,6 +23,7 @@
  * - completely modularize elevator setup and teardown
  *
  */
+#include "blk-mq.h"
 #include <linux/kernel.h>
 #include <linux/fs.h>
 #include <linux/blkdev.h>
@@ -740,31 +741,17 @@ void elevator_set_default(struct request_queue *q)
 	if (q->tag_set->flags & BLK_MQ_F_NO_SCHED_BY_DEFAULT)
 		return;
 
-#ifdef CONFIG_MQ_IOSCHED_DEFAULT_ADIOS
-	ctx.name = "adios";
-	goto found;
-#endif // CONFIG_MQ_IOSCHED_DEFAULT_ADIOS
-
 	/*
 	 * For single queue devices, default to using mq-deadline. If we
 	 * have multiple queues or mq-deadline is not available, default
 	 * to "none".
 	 */
-#if defined(CONFIG_CACHY) && defined(CONFIG_IOSCHED_BFQ)
-		ctx.name = "bfq";
-#endif /* CONFIG_CACHY && CONFIG_IOSCHED_BFQ */
-found:
-	ctx.type = elevator_find_get(ctx.name);
-	if (!ctx.type)
-		return;
-
-	if ((q->nr_hw_queues == 1 ||
-			blk_mq_is_shared_tags(q->tag_set->flags))) {
-		err = elevator_change(q, &ctx);
-		if (err < 0)
-			pr_warn("\"%s\" elevator initialization, failed %d, falling back to \"none\"\n",
-					ctx.name, err);
-	}
+	if (elevator_find_get(ctx.name) && (q->nr_hw_queues == 1 ||
+				blk_mq_is_shared_tags(q->tag_set-flags)))
+	err = elevator_change(q, &ctx);
+	if (err < 0)
+		pr_warn("\"%s\" elevator initialization, failed %d, " 
+			"falling back to \"none\"\n", ctx.name, err);
 	elevator_put(ctx.type);
 }
 
