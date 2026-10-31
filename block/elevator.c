@@ -755,6 +755,10 @@ void elevator_set_default(struct request_queue *q)
 	 * have multiple queues or mq-deadline is not available, default
 	 * to "none".
 	 */
+
+	if (!ctx.type)
+		return;
+
 	err = elevator_change(q, &ctx);
 	if (err < 0)
 		pr_warn("\"%s\" elevator initialization, failed %d, falling back to \"none\"\n",
