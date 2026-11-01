@@ -679,7 +679,9 @@ static ssize_t sched_cgroup_write(struct file *filp, const char __user *ubuf,
 	if (mode < 0)
 		return mode;
 
+#ifndef CONFIG_SCHED_ALT
 	__sched_cgroup_mode_update(mode);
+#endif
 	WRITE_ONCE(cgroup_mode, mode);
 
 	*ppos += cnt;
