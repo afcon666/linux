@@ -820,16 +820,15 @@ static void pci_pm_complete(struct device *dev)
 
 #if defined(CONFIG_SUSPEND) || defined(CONFIG_HIBERNATE_CALLBACKS)
 /**
- * pci_pm_set_prepare_bus_pm
+
+ * pci_pm_suspend_noirq_common - prepare a device to enter a low-power state
  * @pci_dev: pci device
  *
- * Prepare the device to go into a low power state by saving state
- * and configure bus PM policy.
- *
- * Return: TRUE for bus PM will be used
- *         FALSE for bus PM will be skipped
+ * Save the device state and decide whether bus-level power management should
+ * skipped. Returns true if bus-level power management should be skipped,
+ * false otherwise.
  */
-static bool pci_pm_set_prepare_bus_pm(struct pci_dev *pci_dev)
+static bool pci_pm_suspend_noirq_common(struct pci_dev *pci_dev)
 {
 	if (!pci_dev->state_saved) {
 		pci_save_state(pci_dev);
@@ -859,12 +858,10 @@ static bool pci_pm_set_prepare_bus_pm(struct pci_dev *pci_dev)
 
 	if (pci_dev->skip_bus_pm && pm_suspend_no_platform()) {
 		pci_dbg(pci_dev, "PCI PM: Skipped\n");
-		return FALSE;
+		return true;
 	}
 
-	pci_pm_set_unknown_state(pci_dev);
-
-	return TRUE;
+	return false;
 }
 #endif /* CONFIG_SUSPEND || CONFIG_HIBERNATE_CALLBACKS */
 
@@ -957,6 +954,7 @@ static int pci_pm_suspend_noirq(struct device *dev)
 {
 	struct pci_dev *pci_dev = to_pci_dev(dev);
 	const struct dev_pm_ops *pm = dev->driver ? dev->driver->pm : NULL;
+	bool skip_bus_pm;
 
 	if (dev_pm_skip_suspend(dev))
 		return 0;
@@ -987,7 +985,9 @@ static int pci_pm_suspend_noirq(struct device *dev)
 		}
 	}
 
-	if (!pci_pm_set_prepare_bus_pm(pci_dev))
+	skip_bus_pm = pci_pm_suspend_noirq_common(pci_dev);
+
+	if (skip_bus_pm)
 		goto Fixup;
 
 set_unknown:
@@ -1262,6 +1262,7 @@ static int pci_pm_poweroff_noirq(struct device *dev)
 {
 	struct pci_dev *pci_dev = to_pci_dev(dev);
 	const struct dev_pm_ops *pm = dev->driver ? dev->driver->pm : NULL;
+	bool skip_bus_pm;
 
 	if (dev_pm_skip_suspend(dev))
 		return 0;
@@ -1275,15 +1276,25 @@ static int pci_pm_poweroff_noirq(struct device *dev)
 	}
 
 	if (pm->poweroff_noirq) {
+		pci_power_t prev = pci_dev->current_state;
 		int error;
 
 		error = pm->poweroff_noirq(dev);
 		suspend_report_result(dev, pm->poweroff_noirq, error);
 		if (error)
 			return error;
+
+		if (!pci_dev->state_saved && pci_dev->current_state != PCI_D0
+		    && pci_dev->current_state != PCI_UNKNOWN) {
+			pci_WARN_ONCE(pci_dev, pci_dev->current_state != prev,
+				      "PCI PM: State of device not saved by %pS\n",
+				      pm->poweroff_noirq);
+			goto Fixup;
+		}
 	}
 
-	if (!pci_pm_set_prepare_bus_pm(pci_dev))
+	skip_bus_pm = pci_pm_suspend_noirq_common(pci_dev);
+	if (skip_bus_pm)
 		goto Fixup;
 
 	/*

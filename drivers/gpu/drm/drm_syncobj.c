@@ -208,7 +208,7 @@
 #include <drm/drm_gem.h>
 #include <drm/drm_print.h>
 #include <drm/drm_syncobj.h>
-#include <drm/drm_utils.h>
+#include <drm/drm_timeout.h>
 
 #include "drm_internal.h"
 
@@ -1210,38 +1210,41 @@ err_free_points:
 	return timeout;
 }
 
-/**
- * drm_timeout_abs_to_jiffies - calculate jiffies timeout from absolute value
- *
- * @timeout_nsec: timeout nsec component in ns, 0 for poll
- *
- * Calculate the timeout in jiffies from an absolute time in sec/nsec.
- */
-signed long drm_timeout_abs_to_jiffies(int64_t timeout_nsec)
+static int drm_syncobj_array_wait(struct drm_device *dev,
+				  struct drm_file *file_private,
+				  struct drm_syncobj_wait *wait,
+				  struct drm_syncobj_timeline_wait *timeline_wait,
+				  struct drm_syncobj **syncobjs, bool timeline,
+				  ktime_t *deadline)
 {
-	ktime_t abs_timeout, now;
-	u64 timeout_ns, timeout_jiffies64;
+	signed long timeout = 0;
+	uint32_t first = ~0;
 
-	/* make 0 timeout means poll - absolute 0 doesn't seem valid */
-	if (timeout_nsec == 0)
-		return 0;
-
-	abs_timeout = ns_to_ktime(timeout_nsec);
-	now = ktime_get();
-
-	if (!ktime_after(abs_timeout, now))
-		return 0;
-
-	timeout_ns = ktime_to_ns(ktime_sub(abs_timeout, now));
-
-	timeout_jiffies64 = nsecs_to_jiffies64(timeout_ns);
-	/*  clamp timeout to avoid infinite timeout */
-	if (timeout_jiffies64 >= MAX_SCHEDULE_TIMEOUT - 1)
-		return MAX_SCHEDULE_TIMEOUT - 1;
-
-	return timeout_jiffies64 + 1;
+	if (!timeline) {
+		timeout = drm_timeout_abs_to_jiffies(wait->timeout_nsec);
+		timeout = drm_syncobj_array_wait_timeout(syncobjs,
+							 NULL,
+							 wait->count_handles,
+							 wait->flags,
+							 timeout, &first,
+							 deadline);
+		if (timeout < 0)
+			return timeout;
+		wait->first_signaled = first;
+	} else {
+		timeout = drm_timeout_abs_to_jiffies(timeline_wait->timeout_nsec);
+		timeout = drm_syncobj_array_wait_timeout(syncobjs,
+							 u64_to_user_ptr(timeline_wait->points),
+							 timeline_wait->count_handles,
+							 timeline_wait->flags,
+							 timeout, &first,
+							 deadline);
+		if (timeout < 0)
+			return timeout;
+		timeline_wait->first_signaled = first;
+	}
+	return 0;
 }
-EXPORT_SYMBOL(drm_timeout_abs_to_jiffies);
 
 static int drm_syncobj_array_find(struct drm_file *file_private,
 				  u32 __user *handles,

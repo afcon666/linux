@@ -557,7 +557,7 @@ do {										\
 	}									\
 										\
 	__ret = ___wait_event(wq_head, condition, state, 0, 0,			\
-		if (!__t.task) {						\
+		if (!hrtimer_sleeper_task_get(&__t)) {				\
 			__ret = -ETIME;						\
 			break;							\
 		}								\

@@ -486,12 +486,8 @@ static void bbr_set_pacing_rate(struct sock *sk, u32 bw, int gain)
 		WRITE_ONCE(sk->sk_pacing_rate, rate);
 }
 
-/* Return the number of segments BBR would like in a TSO/GSO skb, given a
- * particular max gso size as a constraint. TODO: make this simpler and more
- * consistent by switching bbr to just call tcp_tso_autosize().
- */
-static u32 bbr_tso_segs_generic(struct sock *sk, unsigned int mss_now,
-				u32 gso_max_size)
+/* override sysctl_tcp_min_tso_segs */
+static u32 bbr_min_tso_segs(struct sock *sk)
 {
 	struct bbr *bbr = inet_csk_ca(sk);
 	u32 segs, r;
@@ -516,13 +512,13 @@ static u32 bbr_tso_segs_generic(struct sock *sk, unsigned int mss_now,
 	return segs;
 }
 
-/* Custom tcp_tso_autosize() for BBR, used at transmit time to cap skb size. */
-__bpf_kfunc static u32 bbr_tso_segs(struct sock *sk, unsigned int mss_now)
+__bpf_kfunc static u32 bbr_tso_segs(struct sock *sk, u32 mss_now)
 {
-	return bbr_tso_segs_generic(sk, mss_now, sk->sk_gso_max_size);
+	if (unlikely(!mss_now))
+		return bbr_min_tso_segs(sk);
+	return tcp_tso_autosize(sk, mss_now, bbr_min_tso_segs(sk));
 }
 
-/* Like bbr_tso_segs(), using mss_cache, ignoring driver's sk_gso_max_size. */
 static u32 bbr_tso_segs_goal(struct sock *sk)
 {
 	struct tcp_sock *tp = tcp_sk(sk);

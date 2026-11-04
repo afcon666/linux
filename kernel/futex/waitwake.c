@@ -386,7 +386,7 @@ void futex_do_wait(struct futex_q *q, struct hrtimer_sleeper *timeout)
 		 * flagged for rescheduling. Only call schedule if there
 		 * is no timeout, or if it has yet to expire.
 		 */
-		if (!timeout || timeout->task)
+	if (!timeout || hrtimer_sleeper_task_get(timeout))
 #ifdef CONFIG_SCHED_BORE
 		{
 			current->bore.futex_waiting = true;
@@ -550,7 +550,7 @@ retry:
 static void futex_sleep_multiple(struct futex_vector *vs, unsigned int count,
 				 struct hrtimer_sleeper *to)
 {
-	if (to && !to->task)
+	if (to && !hrtimer_sleeper_task_get(to))
 		return;
 
 	for (; count; count--, vs++) {
@@ -601,7 +601,7 @@ int futex_wait_multiple(struct futex_vector *vs, unsigned int count,
 		if (ret >= 0)
 			return ret;
 
-		if (to && !to->task)
+		if (to && !hrtimer_sleeper_task_get(to))
 			return -ETIMEDOUT;
 		else if (signal_pending(current))
 			return -ERESTARTSYS;
@@ -736,7 +736,7 @@ retry:
 	if (!futex_unqueue(&q))
 		return 0;
 
-	if (to && !to->task)
+	if (to && !hrtimer_sleeper_task_get(to))
 		return -ETIMEDOUT;
 
 	/*
