@@ -5234,7 +5234,7 @@ static long calc_max_shares(struct cfs_rq *cfs_rq)
  * Scales between "smp" and "max" in a natural way. No longer needs clipping
  * since there are no unnatural inflations like with "max".
  */
-static long calc_concur_shares(struct cfs_rq *cfs_rq)
+long calc_concur_shares(struct cfs_rq *cfs_rq)
 {
 	struct task_group *tg = cfs_rq->tg;
 	int nr = min(tg_tasks(tg), tg_cpus(tg));
