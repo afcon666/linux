@@ -489,27 +489,7 @@ static void bbr_set_pacing_rate(struct sock *sk, u32 bw, int gain)
 /* override sysctl_tcp_min_tso_segs */
 static u32 bbr_min_tso_segs(struct sock *sk)
 {
-	struct bbr *bbr = inet_csk_ca(sk);
-	u32 segs, r;
-	u64 bytes;
-
-	/* Budget a TSO/GSO burst size allowance based on bw (pacing_rate). */
-	bytes = READ_ONCE(sk->sk_pacing_rate) >> READ_ONCE(sk->sk_pacing_shift);
-
-	/* Budget a TSO/GSO burst size allowance based on min_rtt. For every
-	 * K = 2^tso_rtt_shift microseconds of min_rtt, halve the burst.
-	 * The min_rtt-based burst allowance is: 64 KBytes / 2^(min_rtt/K)
-	 */
-	if (bbr_param(sk, tso_rtt_shift)) {
-		r = bbr->min_rtt_us >> bbr_param(sk, tso_rtt_shift);
-		if (r < BITS_PER_TYPE(u32))   /* prevent undefined behavior */
-			bytes += GSO_LEGACY_MAX_SIZE >> r;
-	}
-
-	bytes = min_t(u32, bytes, gso_max_size - 1 - MAX_TCP_HEADER);
-	segs = max_t(u32, bytes / mss_now,
-		     sock_net(sk)->ipv4.sysctl_tcp_min_tso_segs);
-	return segs;
+	return READ_ONCE(sk->sk_pacing_rate) < (bbr_min_tso_rate >> 3) ? 1 : 2;
 }
 
 __bpf_kfunc static u32 bbr_tso_segs(struct sock *sk, u32 mss_now)
@@ -522,8 +502,17 @@ __bpf_kfunc static u32 bbr_tso_segs(struct sock *sk, u32 mss_now)
 static u32 bbr_tso_segs_goal(struct sock *sk)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
+	u32 segs, bytes;
 
-	return bbr_tso_segs_generic(sk, tp->mss_cache, GSO_LEGACY_MAX_SIZE);
+	/* Sort of tcp_tso_autosize() but ignoring
+	 * driver provided sk_gso_max_size.
+	 */
+	bytes = min_t(unsigned long,
+		      READ_ONCE(sk->sk_pacing_rate) >> READ_ONCE(sk->sk_pacing_shift),
+		      GSO_LEGACY_MAX_SIZE - 1 - MAX_TCP_HEADER);
+	segs = max_t(u32, bytes / tp->mss_cache, bbr_min_tso_segs(sk));
+
+	return min(segs, 0x7FU);
 }
 
 /* Save "last known good" cwnd so we can restore it after losses or PROBE_RTT */
@@ -537,7 +526,6 @@ static void bbr_save_cwnd(struct sock *sk)
 	else  /* loss recovery or BBR_PROBE_RTT have temporarily cut cwnd */
 		bbr->prior_cwnd = max(bbr->prior_cwnd, tcp_snd_cwnd(tp));
 }
-
 __bpf_kfunc static void bbr_cwnd_event_tx_start(struct sock *sk)
 {
 	struct tcp_sock *tp = tcp_sk(sk);

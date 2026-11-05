@@ -224,15 +224,6 @@ static inline void prefetchw_next_lru_folio(struct folio *folio,
 }
 #endif
 
-bool sysctl_workingset_protection __read_mostly = true;
-u8 sysctl_anon_min_ratio  __read_mostly = CONFIG_ANON_MIN_RATIO;
-u8 sysctl_clean_low_ratio __read_mostly = CONFIG_CLEAN_LOW_RATIO;
-u8 sysctl_clean_min_ratio __read_mostly = CONFIG_CLEAN_MIN_RATIO;
-static u64 sysctl_anon_min_ratio_kb  __read_mostly = 0;
-static u64 sysctl_clean_low_ratio_kb __read_mostly = 0;
-static u64 sysctl_clean_min_ratio_kb __read_mostly = 0;
-static u64 workingset_protection_prev_totalram __read_mostly = 0;
-
 /*
  * From 0 .. MAX_SWAPPINESS.  Higher means more swappy.
  */
@@ -2852,95 +2843,6 @@ static bool can_age_anon_pages(struct lruvec *lruvec,
 			  lruvec_memcg(lruvec));
 }
 
-int vm_workingset_protection_update_handler(const struct ctl_table *table, int write,
-		void __user *buffer, size_t *lenp, loff_t *ppos)
-{
-	int ret = proc_dou8vec_minmax(table, write, buffer, lenp, ppos);
-	if (ret || !write)
-		return ret;
-
-	workingset_protection_prev_totalram = 0;
-
-	return 0;
-}
-
-static void prepare_workingset_protection(pg_data_t *pgdat, struct scan_control *sc)
-{
-	unsigned long node_mem_total;
-	struct sysinfo i;
-
-	if (!(sysctl_workingset_protection)) {
-		sc->anon_below_min = 0;
-		sc->clean_below_low = 0;
-		sc->clean_below_min = 0;
-		return;
-	}
-
-	if (likely(sysctl_anon_min_ratio  ||
-	           sysctl_clean_low_ratio ||
-		       sysctl_clean_min_ratio)) {
-#ifdef CONFIG_NUMA
-		si_meminfo_node(&i, pgdat->node_id);
-#else //CONFIG_NUMA
-		si_meminfo(&i);
-#endif //CONFIG_NUMA
-		node_mem_total = i.totalram;
-
-		if (unlikely(workingset_protection_prev_totalram != node_mem_total)) {
-			sysctl_anon_min_ratio_kb  =
-				node_mem_total * sysctl_anon_min_ratio  / 100;
-			sysctl_clean_low_ratio_kb =
-				node_mem_total * sysctl_clean_low_ratio / 100;
-			sysctl_clean_min_ratio_kb =
-				node_mem_total * sysctl_clean_min_ratio / 100;
-			workingset_protection_prev_totalram = node_mem_total;
-		}
-	}
-
-	/*
-	 * Check the number of anonymous pages to protect them from
-	 * reclaiming if their amount is below the specified.
-	 */
-	if (sysctl_anon_min_ratio) {
-		unsigned long reclaimable_anon;
-
-		reclaimable_anon =
-			node_page_state(pgdat, NR_ACTIVE_ANON) +
-			node_page_state(pgdat, NR_INACTIVE_ANON) +
-			node_page_state(pgdat, NR_ISOLATED_ANON);
-
-		sc->anon_below_min = reclaimable_anon < sysctl_anon_min_ratio_kb;
-	} else
-		sc->anon_below_min = 0;
-
-	/*
-	 * Check the number of clean file pages to protect them from
-	 * reclaiming if their amount is below the specified.
-	 */
-	if (sysctl_clean_low_ratio || sysctl_clean_min_ratio) {
-		unsigned long reclaimable_file, dirty, clean;
-
-		reclaimable_file =
-			node_page_state(pgdat, NR_ACTIVE_FILE) +
-			node_page_state(pgdat, NR_INACTIVE_FILE) +
-			node_page_state(pgdat, NR_ISOLATED_FILE);
-		dirty = node_page_state(pgdat, NR_FILE_DIRTY);
-		/*
-		 * node_page_state() sum can go out of sync since
-		 * all the values are not read at once.
-		 */
-		if (likely(reclaimable_file > dirty))
-			clean = reclaimable_file - dirty;
-		else
-			clean = 0;
-
-		sc->clean_below_low = clean < sysctl_clean_low_ratio_kb;
-		sc->clean_below_min = clean < sysctl_clean_min_ratio_kb;
-	} else {
-		sc->clean_below_low = 0;
-		sc->clean_below_min = 0;
-	}
-}
 
 #ifdef CONFIG_LRU_GEN
 
@@ -5118,21 +5020,11 @@ static int get_tier_idx(struct lruvec *lruvec, int type)
 	return tier - 1;
 }
 
-static int get_type_to_scan(struct lruvec *lruvec, struct scan_control *sc, int swappiness)
+static int get_type_to_scan(struct lruvec *lruvec, int swappiness)
 {
 	struct ctrl_pos sp, pv;
 
-	if (swappiness == MIN_SWAPPINESS)
-		return LRU_GEN_FILE;
-
-	if (sc->clean_below_min)
-		return LRU_GEN_ANON;
-	if (sc->anon_below_min)
-		return LRU_GEN_FILE;
-	if (sc->clean_below_low)
-		return LRU_GEN_ANON;
-
-	if (swappiness == MIN_SWAPPINESS + 1)
+	if (swappiness <= MIN_SWAPPINESS + 1)
 		return LRU_GEN_FILE;
 
 	if (swappiness >= MAX_SWAPPINESS)
@@ -6622,8 +6514,6 @@ again:
 
 	prepare_scan_control(pgdat, sc);
 
-	prepare_workingset_protection(pgdat, sc);
-
 	shrink_node_memcgs(pgdat, sc);
 
 	flush_reclaim_state(sc);
@@ -6711,7 +6601,6 @@ again:
 	else if (sc->cache_trim_mode)
 		sc->cache_trim_mode_failed = 1;
 }
-
 /*
  * Returns true if compaction should go ahead for a costly-order request, or
  * the allocation would already succeed without compaction. Return false if we

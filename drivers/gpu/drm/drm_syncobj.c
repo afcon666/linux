@@ -1247,55 +1247,46 @@ static int drm_syncobj_array_wait(struct drm_device *dev,
 }
 
 static int drm_syncobj_array_find(struct drm_file *file_private,
-				  u32 __user *handles,
+				  void __user *user_handles,
 				  uint32_t count_handles,
-				  struct drm_syncobj **stack_syncobjs,
-				  u32 stack_count,
 				  struct drm_syncobj ***syncobjs_out)
 {
+	uint32_t i, *handles;
 	struct drm_syncobj **syncobjs;
-	uint32_t i;
 	int ret;
 
-	if (!access_ok(handles, count_handles * sizeof(*handles)))
-		return -EFAULT;
+	handles = kmalloc_array(count_handles, sizeof(*handles), GFP_KERNEL);
+	if (handles == NULL)
+		return -ENOMEM;
 
-	if (count_handles > stack_count) {
-		syncobjs = kmalloc_array(count_handles, sizeof(*syncobjs), GFP_KERNEL);
-		if (!syncobjs)
-			return -ENOMEM;
-	} else {
-		syncobjs = stack_syncobjs;
+	if (copy_from_user(handles, user_handles,
+			   sizeof(uint32_t) * count_handles)) {
+		ret = -EFAULT;
+		goto err_free_handles;
 	}
 
-	for (i = 0; i < count_handles; i++) {
-		u32 handle;
 	syncobjs = kmalloc_objs(*syncobjs, count_handles);
 	if (syncobjs == NULL) {
 		ret = -ENOMEM;
 		goto err_free_handles;
 	}
 
-		if (__get_user(handle, handles++)) {
-			ret = -EFAULT;
-			goto err_put_syncobjs;
-		}
-		syncobjs[i] = drm_syncobj_find(file_private, handle);
+	for (i = 0; i < count_handles; i++) {
+		syncobjs[i] = drm_syncobj_find(file_private, handles[i]);
 		if (!syncobjs[i]) {
 			ret = -ENOENT;
 			goto err_put_syncobjs;
 		}
 	}
 
+	kfree(handles);
 	*syncobjs_out = syncobjs;
 	return 0;
 
 err_put_syncobjs:
 	while (i-- > 0)
 		drm_syncobj_put(syncobjs[i]);
-
-	if (syncobjs != stack_syncobjs)
-		kfree(syncobjs);
+	kfree(syncobjs);
 err_free_handles:
 	kfree(handles);
 
@@ -1344,9 +1335,7 @@ drm_syncobj_wait_ioctl(struct drm_device *dev, void *data,
 
 	ret = drm_syncobj_array_find(file_private,
 				     u64_to_user_ptr(args->handles),
-				     count,
-				     stack_syncobjs,
-				     ARRAY_SIZE(stack_syncobjs),
+				     args->count_handles,
 				     &syncobjs);
 	if (ret < 0)
 		return ret;
@@ -1405,9 +1394,7 @@ drm_syncobj_timeline_wait_ioctl(struct drm_device *dev, void *data,
 
 	ret = drm_syncobj_array_find(file_private,
 				     u64_to_user_ptr(args->handles),
-				     count,
-				     stack_syncobjs,
-				     ARRAY_SIZE(stack_syncobjs),
+				     args->count_handles,
 				     &syncobjs);
 	if (ret < 0)
 		return ret;
@@ -1561,8 +1548,6 @@ drm_syncobj_reset_ioctl(struct drm_device *dev, void *data,
 	ret = drm_syncobj_array_find(file_private,
 				     u64_to_user_ptr(args->handles),
 				     args->count_handles,
-				     stack_syncobjs,
-				     ARRAY_SIZE(stack_syncobjs),
 				     &syncobjs);
 	if (ret < 0)
 		return ret;
@@ -1598,8 +1583,6 @@ drm_syncobj_signal_ioctl(struct drm_device *dev, void *data,
 	ret = drm_syncobj_array_find(file_private,
 				     u64_to_user_ptr(args->handles),
 				     args->count_handles,
-				     stack_syncobjs,
-				     ARRAY_SIZE(stack_syncobjs),
 				     &syncobjs);
 	if (ret < 0)
 		return ret;
@@ -1639,9 +1622,7 @@ drm_syncobj_timeline_signal_ioctl(struct drm_device *dev, void *data,
 
 	ret = drm_syncobj_array_find(file_private,
 				     u64_to_user_ptr(args->handles),
-				     count,
-				     stack_syncobjs,
-				     ARRAY_SIZE(stack_syncobjs),
+				     args->count_handles,
 				     &syncobjs);
 	if (ret < 0)
 		return ret;
@@ -1720,8 +1701,6 @@ int drm_syncobj_query_ioctl(struct drm_device *dev, void *data,
 	ret = drm_syncobj_array_find(file_private,
 				     u64_to_user_ptr(args->handles),
 				     args->count_handles,
-				     stack_syncobjs,
-				     ARRAY_SIZE(stack_syncobjs),
 				     &syncobjs);
 	if (ret < 0)
 		return ret;

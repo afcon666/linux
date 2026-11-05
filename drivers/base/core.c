@@ -4877,7 +4877,7 @@ static ASYNC_DOMAIN(sd_domain);
 static void shutdown_one_device(struct device *dev)
 {
 	/* hold lock to avoid race with probe/release */
-	if (dev->parent && dev->bus && dev->bus->need_parent_lock)
+	if (dev->parent && dev->bus && dev->type->need_parent_lock)
 		device_lock(dev->parent);
 	device_lock(dev);
 
@@ -4901,7 +4901,7 @@ static void shutdown_one_device(struct device *dev)
 	}
 
 	device_unlock(dev);
-	if (dev->parent && dev->bus && dev->bus->need_parent_lock)
+	if (dev->parent && dev->bus && dev->type->need_parent_lock)
 		device_unlock(dev->parent);
 
 	put_device(dev);
