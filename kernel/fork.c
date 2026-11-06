@@ -2045,9 +2045,6 @@ __latent_entropy struct task_struct *copy_process(
 	if ((clone_flags & (CLONE_NEWUSER|CLONE_FS)) == (CLONE_NEWUSER|CLONE_FS))
 		return ERR_PTR(-EINVAL);
 
-	if ((clone_flags & CLONE_NEWUSER) && !unprivileged_userns_clone)
-		if (!capable(CAP_SYS_ADMIN))
-			return ERR_PTR(-EPERM);
 
 	/*
 	 * Thread groups must share signals as well, and detached threads
@@ -3291,8 +3288,7 @@ int ksys_unshare(unsigned long unshare_flags)
 
 	/* No unsharing with overriden fs state */
 	VFS_WARN_ON_ONCE(unshare_flags & (CLONE_NEWNS | CLONE_FS) &&
-			!unprivileged_userns_clone &&
-			 current->fs != current->real_fs);
+			current->fs != current->real_fs);
 
 	err = check_unshare_flags(unshare_flags);
 	if (err)
